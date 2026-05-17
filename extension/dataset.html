@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <title>Tab Sorter — Dataset</title>
+    <link rel="stylesheet" href="dataset.css" />
+  </head>
+  <body>
+    <header>
+      <div class="title">
+        <span class="logo">🗂️</span>
+        <h1>Dataset de clasificaciones</h1>
+      </div>
+      <div class="header-actions">
+        <span class="muted" id="summary">—</span>
+        <button id="export-jsonl" class="primary">Exportar JSONL</button>
+        <button id="export-py" class="secondary">Exportar dataset.py</button>
+        <button id="clear" class="danger">Vaciar</button>
+      </div>
+    </header>
+
+    <section class="controls">
+      <input type="search" id="search" placeholder="Filtrar por título / host…" />
+      <select id="filter-source">
+        <option value="">Fuente: todas</option>
+        <option value="auto">auto (modelo local)</option>
+        <option value="claude">claude (popup)</option>
+      </select>
+      <select id="filter-category">
+        <option value="">Categoría: todas</option>
+      </select>
+      <select id="filter-status">
+        <option value="">Estado: todos</option>
+        <option value="confirmed">confirmados</option>
+        <option value="unconfirmed">sin confirmar</option>
+        <option value="corrected">corregidos</option>
+        <option value="uncategorized">sin categoría</option>
+      </select>
+      <span class="spacer"></span>
+      <label class="bulk">
+        Reasignar seleccionados a:
+        <select id="bulk-target">
+          <option value="">—</option>
+        </select>
+        <button id="bulk-apply" class="secondary">aplicar</button>
+      </label>
+    </section>
+
+    <main>
+      <div class="table-wrapper">
+        <table id="table">
+          <thead>
+            <tr>
+              <th class="check-col"><input type="checkbox" id="check-all" /></th>
+              <th>Cuándo</th>
+              <th>Título / URL</th>
+              <th>Predicción</th>
+              <th>Etiqueta final</th>
+              <th>Sim.</th>
+              <th>Origen</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <div id="empty" class="empty" hidden>
+          <p>No hay eventos todavía.</p>
+          <p class="muted small">
+            Activa "Recolectar dataset" en el popup, navega normalmente y vuelve aquí.
+          </p>
+        </div>
+      </div>
+
+      <footer class="pager">
+        <button id="prev" class="secondary">‹ anterior</button>
+        <span id="page-info" class="muted">—</span>
+        <button id="next" class="secondary">siguiente ›</button>
+      </footer>
+    </main>
+
+    <script type="module" src="dataset.js"></script>
+  </body>
+</html>

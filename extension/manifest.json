@@ -3,7 +3,7 @@
   "name": "Tab Sorter (Claude)",
   "version": "0.2.0",
   "description": "Agrupa pestañas en categorías usando embeddings locales (transformers.js) y opcionalmente Claude Code.",
-  "permissions": ["tabs", "tabGroups", "nativeMessaging", "storage", "offscreen"],
+  "permissions": ["tabs", "tabGroups", "nativeMessaging", "storage", "offscreen", "unlimitedStorage"],
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   },

@@ -192,6 +192,37 @@ claude-tab-sorter/
 └── README.md
 ```
 
+## Recolectar tu propio dataset
+
+La extensión incluye un recolector opt-in de eventos de clasificación que convierte tu navegación real en material de entrenamiento para mejorar el modelo local con tu uso específico.
+
+### Flujo
+
+1. **Activar** la casilla *Recolectar dataset* en el popup. La opción está apagada por defecto.
+2. **Navegar normalmente** con *Auto* activado (clasificación local) y/o usar *Categorizar con Claude* periódicamente. Cada pestaña que el modelo etiqueta queda guardada en `chrome.storage.local.dataset` junto con el título, host, predicción, score de similitud, color, y la fuente (`auto` / `claude`).
+3. **Abrir el visor** (link "abrir" junto al toggle, o `chrome-extension://<ID>/dataset.html`). Verás una tabla paginada con filtros por texto, fuente, categoría y estado (sin confirmar, confirmados, corregidos, sin categoría).
+4. **Corregir** los casos en que el modelo se equivocó: el dropdown "Etiqueta final" de cada fila te deja reasignar, y la barra superior permite reasignación en bloque. Las correcciones quedan marcadas como `userCategory`.
+5. **Exportar** cuando tengas suficientes ejemplos:
+   - `Exportar JSONL` → un evento por línea, ideal para inspección o pipelines externos.
+   - `Exportar dataset.py` → archivo Python listo para **reemplazar `finetune/dataset.py`** (agrupa por etiqueta final, dedup automático).
+
+### Re-entrenamiento con datos reales
+
+```bash
+cp ~/Downloads/dataset-2026-*.py finetune/dataset.py
+cd finetune && source .venv/bin/activate
+python train.py && python export.py && python evaluate.py
+```
+
+Después recarga la extensión y bumpea `PROTO_VERSION` en `extension/prototypes.js` para invalidar la cache de prototipos.
+
+### Privacidad
+
+- Todo se guarda **local** en `chrome.storage.local` (con `unlimitedStorage`). No hay red.
+- URLs y títulos se truncan: el host + primeros 80 chars del pathname y los primeros 200 chars del título.
+- Botón *Vaciar* borra todo el dataset. Desactiva el toggle para detener la recolección.
+- Tope de seguridad: 50 000 eventos (se rotan los más antiguos).
+
 ## Re-entrenar el modelo local
 
 Si quieres entrenar tu propio clasificador (más categorías, más ejemplos, otro idioma):

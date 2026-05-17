@@ -171,6 +171,8 @@ h2 {
   font-weight: 600;
 }
 .row.toggle .small { font-size: 10px; }
+.row.toggle .small a { color: var(--accent); text-decoration: none; }
+.row.toggle .small a:hover { text-decoration: underline; }
 
 input[type="checkbox"] {
   width: 32px;

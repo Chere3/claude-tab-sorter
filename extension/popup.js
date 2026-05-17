@@ -54,6 +54,39 @@ function bumpStats(byCategory, source = "popup") {
   });
 }
 
+function shortUrl(u) {
+  try {
+    const url = new URL(u);
+    return url.hostname.replace(/^www\./, "") + url.pathname.slice(0, 80);
+  } catch {
+    return (u || "").slice(0, 120);
+  }
+}
+
+function urlHost(u) {
+  try {
+    return new URL(u).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
+function logEvents(events) {
+  if (!events?.length) return Promise.resolve();
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: "log-events", events }, () => resolve());
+  });
+}
+
+async function refreshDatasetCount() {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: "dataset-count" }, (r) => {
+      $("dataset-count").textContent = r?.count || 0;
+      resolve();
+    });
+  });
+}
+
 async function categorize() {
   const button = $("categorize");
   button.disabled = true;
@@ -94,6 +127,8 @@ async function categorize() {
 
     const created = [];
     const byCategory = {};
+    const datasetEvents = [];
+    const now = Date.now();
 
     for (const g of groups) {
       const validIds = (g.tabIds || []).filter((id) =>
@@ -123,10 +158,29 @@ async function categorize() {
         });
         created.push({ name, count: ids.length, color });
         byCategory[name] = (byCategory[name] || 0) + ids.length;
+
+        for (const id of ids) {
+          const t = tabs.find((x) => x.id === id);
+          if (!t) continue;
+          datasetEvents.push({
+            ts: now,
+            title: (t.title || "").slice(0, 200),
+            url: shortUrl(t.url),
+            host: urlHost(t.url),
+            category: name,
+            fallbackCategory: name,
+            similarity: null,
+            color,
+            source: "claude",
+            userCategory: null
+          });
+        }
       }
     }
 
     await bumpStats(byCategory, "popup");
+    await logEvents(datasetEvents);
+    refreshDatasetCount();
 
     renderGroups(created);
     setStatus(`Listo. ${created.length} grupos · ${Object.values(byCategory).reduce((a, b) => a + b, 0)} pestañas.`, "ok");
@@ -186,11 +240,22 @@ $("categorize").addEventListener("click", categorize);
 $("ungroup").addEventListener("click", ungroup);
 $("scope").addEventListener("change", updateTabCount);
 
-chrome.storage.local.get(["model", "scope", "auto"]).then((s) => {
+chrome.storage.local.get(["model", "scope", "auto", "datasetEnabled"]).then((s) => {
   if (s.model) $("model").value = s.model;
   if (s.scope) $("scope").value = s.scope;
   $("auto").checked = !!s.auto;
+  $("dataset-enabled").checked = !!s.datasetEnabled;
   updateTabCount();
+  refreshDatasetCount();
+});
+
+$("dataset-enabled").addEventListener("change", () => {
+  chrome.storage.local.set({ datasetEnabled: $("dataset-enabled").checked });
+});
+
+$("open-dataset").addEventListener("click", (e) => {
+  e.preventDefault();
+  chrome.tabs.create({ url: chrome.runtime.getURL("dataset.html") });
 });
 
 for (const id of ["model", "scope"]) {
@@ -225,6 +290,7 @@ chrome.storage.local.get("modelLoad").then((s) => renderModelStatus(s.modelLoad)
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.modelLoad) renderModelStatus(changes.modelLoad.newValue);
   if (changes.stats) renderStats();
+  if (changes.dataset) refreshDatasetCount();
 });
 
 function topCategory(byCategory) {

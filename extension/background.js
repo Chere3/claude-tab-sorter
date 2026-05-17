@@ -118,6 +118,33 @@ function urlHost(u) {
   }
 }
 
+function shortUrl(u) {
+  try {
+    const url = new URL(u);
+    return url.hostname.replace(/^www\./, "") + url.pathname.slice(0, 80);
+  } catch {
+    return (u || "").slice(0, 120);
+  }
+}
+
+const DATASET_MAX_ENTRIES = 50000;
+
+async function datasetEnabled() {
+  const { datasetEnabled } = await chrome.storage.local.get({ datasetEnabled: false });
+  return !!datasetEnabled;
+}
+
+async function logEvents(events) {
+  if (!events?.length) return;
+  if (!(await datasetEnabled())) return;
+  const { dataset } = await chrome.storage.local.get({ dataset: [] });
+  for (const e of events) dataset.push(e);
+  if (dataset.length > DATASET_MAX_ENTRIES) {
+    dataset.splice(0, dataset.length - DATASET_MAX_ENTRIES);
+  }
+  await chrome.storage.local.set({ dataset });
+}
+
 function isClassifiable(tab) {
   if (!tab) return false;
   if (tab.pinned) return false;
@@ -204,10 +231,26 @@ async function autoClassifyAndApply(tabs, windowId) {
   const results = await classifyLocal(live);
   console.log("[tab-sorter] local results", results);
 
+  const events = [];
+  const now = Date.now();
   for (const r of results) {
     const t = live.find((x) => x.id === r.tabId);
-    if (t) lastHost.set(t.id, urlHost(t.url));
+    if (!t) continue;
+    lastHost.set(t.id, urlHost(t.url));
+    events.push({
+      ts: now,
+      title: (t.title || "").slice(0, 200),
+      url: shortUrl(t.url),
+      host: urlHost(t.url),
+      category: r.category,
+      fallbackCategory: r.fallbackCategory,
+      similarity: r.similarity,
+      color: r.color,
+      source: "auto",
+      userCategory: null
+    });
   }
+  await logEvents(events);
 
   const tabById = new Map(live.map((t) => [t.id, t]));
   const assignments = results
@@ -329,6 +372,52 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         () => sendResponse({ ok: true }),
         (e) => sendResponse({ ok: false, error: e.message })
       );
+    return true;
+  }
+  if (msg?.type === "log-events") {
+    logEvents(msg.events || []).then(
+      () => sendResponse({ ok: true }),
+      (e) => sendResponse({ ok: false, error: e.message })
+    );
+    return true;
+  }
+  if (msg?.type === "dataset-count") {
+    chrome.storage.local.get({ dataset: [] }).then(
+      ({ dataset }) => sendResponse({ ok: true, count: dataset.length }),
+      (e) => sendResponse({ ok: false, error: e.message })
+    );
+    return true;
+  }
+  if (msg?.type === "clear-dataset") {
+    chrome.storage.local.set({ dataset: [] }).then(
+      () => sendResponse({ ok: true }),
+      (e) => sendResponse({ ok: false, error: e.message })
+    );
+    return true;
+  }
+  if (msg?.type === "relabel-entry") {
+    chrome.storage.local.get({ dataset: [] }).then(({ dataset }) => {
+      const i = Number(msg.index);
+      if (i >= 0 && i < dataset.length) {
+        dataset[i].userCategory = msg.userCategory || null;
+        dataset[i].confirmedAt = Date.now();
+      }
+      chrome.storage.local.set({ dataset }).then(
+        () => sendResponse({ ok: true }),
+        (e) => sendResponse({ ok: false, error: e.message })
+      );
+    });
+    return true;
+  }
+  if (msg?.type === "delete-entry") {
+    chrome.storage.local.get({ dataset: [] }).then(({ dataset }) => {
+      const i = Number(msg.index);
+      if (i >= 0 && i < dataset.length) dataset.splice(i, 1);
+      chrome.storage.local.set({ dataset }).then(
+        () => sendResponse({ ok: true }),
+        (e) => sendResponse({ ok: false, error: e.message })
+      );
+    });
     return true;
   }
 });
