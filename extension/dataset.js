@@ -219,16 +219,17 @@ function render() {
 }
 
 function renderSummary() {
-  const totals = { auto: 0, claude: 0, confirmed: 0, corrected: 0, uncategorized: 0 };
+  const totals = { auto: 0, claude: 0, manual: 0, confirmed: 0, corrected: 0, uncategorized: 0 };
   for (const e of state.all) {
     if (e.source === "auto") totals.auto++;
     if (e.source === "claude") totals.claude++;
+    if (e.source === "manual" || e.manualMove) totals.manual++;
     if (e.userCategory) totals.confirmed++;
     if (isCorrected(e)) totals.corrected++;
     if (!e.category) totals.uncategorized++;
   }
   $("summary").textContent =
-    `${state.all.length} eventos · 🤖 ${totals.auto} · ✨ ${totals.claude} · ✓ ${totals.confirmed} confirmados · ↻ ${totals.corrected} corregidos · ? ${totals.uncategorized} sin categoría`;
+    `${state.all.length} eventos · 🤖 ${totals.auto} · ✨ ${totals.claude} · ✋ ${totals.manual} · ✓ ${totals.confirmed} confirmados · ↻ ${totals.corrected} corregidos · ? ${totals.uncategorized} sin categoría`;
 }
 
 function sendMessage(msg) {

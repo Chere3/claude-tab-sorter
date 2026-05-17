@@ -128,6 +128,23 @@ function shortUrl(u) {
 }
 
 const DATASET_MAX_ENTRIES = 50000;
+const PROGRAMMATIC_TTL_MS = 4000;
+const recentProgrammatic = new Map();
+
+function markProgrammatic(tabIds, ttl = PROGRAMMATIC_TTL_MS) {
+  const exp = Date.now() + ttl;
+  for (const id of tabIds) recentProgrammatic.set(id, exp);
+}
+
+function isProgrammatic(tabId) {
+  const exp = recentProgrammatic.get(tabId);
+  if (!exp) return false;
+  if (exp < Date.now()) {
+    recentProgrammatic.delete(tabId);
+    return false;
+  }
+  return true;
+}
 
 async function datasetEnabled() {
   const { datasetEnabled } = await chrome.storage.local.get({ datasetEnabled: false });
@@ -287,6 +304,7 @@ async function applyAssignments(assignments, windowId) {
         continue;
       }
 
+      markProgrammatic([a.tabId]);
       if (existing) {
         if (a.currentGroupId === existing.id) continue;
         await chrome.tabs.group({ tabIds: a.tabId, groupId: existing.id });
@@ -328,7 +346,81 @@ async function bumpStats(byCategoryMap, source) {
   await chrome.storage.local.set({ stats });
 }
 
+async function handleManualGroupChange(tabId, newGroupId, tab) {
+  if (!(await datasetEnabled())) return;
+  let group;
+  try {
+    group = await chrome.tabGroups.get(newGroupId);
+  } catch {
+    return;
+  }
+  const groupTitle = (group?.title || "").trim();
+  if (!groupTitle) return;
+
+  let liveTab = tab;
+  if (!liveTab || !liveTab.url) {
+    try {
+      liveTab = await chrome.tabs.get(tabId);
+    } catch {
+      return;
+    }
+  }
+  if (!liveTab?.url || !/^https?:/.test(liveTab.url)) return;
+
+  const url = shortUrl(liveTab.url);
+  const host = urlHost(liveTab.url);
+  const { dataset } = await chrome.storage.local.get({ dataset: [] });
+  const now = Date.now();
+
+  let matchedIndex = -1;
+  const tail = Math.max(0, dataset.length - 500);
+  for (let i = dataset.length - 1; i >= tail; i--) {
+    const e = dataset[i];
+    if (e.url === url && e.source !== "manual" && !e.userCategory) {
+      matchedIndex = i;
+      break;
+    }
+  }
+
+  if (matchedIndex >= 0) {
+    dataset[matchedIndex].userCategory = groupTitle;
+    dataset[matchedIndex].confirmedAt = now;
+    dataset[matchedIndex].manualMove = true;
+    await chrome.storage.local.set({ dataset });
+  } else {
+    await logEvents([
+      {
+        ts: now,
+        title: (liveTab.title || "").slice(0, 200),
+        url,
+        host,
+        category: null,
+        fallbackCategory: null,
+        similarity: null,
+        color: group.color || null,
+        source: "manual",
+        userCategory: groupTitle,
+        confirmedAt: now
+      }
+    ]);
+  }
+}
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (!("groupId" in changeInfo)) return;
+  if (changeInfo.groupId === -1) return; // ungrouped — ignore
+  if (isProgrammatic(tabId)) return;
+  handleManualGroupChange(tabId, changeInfo.groupId, tab).catch((e) =>
+    console.error("[tab-sorter] manual-move log failed", e)
+  );
+});
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type === "mark-programmatic") {
+    markProgrammatic(msg.tabIds || []);
+    sendResponse({ ok: true });
+    return false;
+  }
   if (msg?.type === "host-request") {
     sendToHost(msg.payload).then(
       (response) => sendResponse({ ok: true, response }),

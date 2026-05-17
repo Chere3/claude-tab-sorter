@@ -147,6 +147,9 @@ async function categorize() {
       const name = g.name || "Grupo";
 
       for (const [winId, ids] of byWindow) {
+        await new Promise((resolve) =>
+          chrome.runtime.sendMessage({ type: "mark-programmatic", tabIds: ids }, () => resolve())
+        );
         const groupId = await chrome.tabs.group({
           tabIds: ids,
           createProperties: { windowId: winId }
