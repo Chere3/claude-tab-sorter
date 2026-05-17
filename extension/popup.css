@@ -117,6 +117,31 @@ h2 {
   color: var(--muted);
 }
 
+.source-split {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.source-pill {
+  flex: 1;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+.source-pill .source-label { color: var(--fg); font-weight: 500; }
+.source-pill .source-count {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+  font-weight: 600;
+}
+
 .controls {
   display: grid;
   gap: 6px;

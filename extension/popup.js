@@ -241,13 +241,15 @@ function topCategory(byCategory) {
 
 async function renderStats() {
   const { stats } = await chrome.storage.local.get({
-    stats: { total: 0, byCategory: {}, runs: 0, lastRun: null }
+    stats: { total: 0, byCategory: {}, runs: 0, lastRun: null, bySource: {} }
   });
   $("stat-total").textContent = stats.total || 0;
   $("stat-runs").textContent = stats.runs || 0;
   const top = topCategory(stats.byCategory);
   $("stat-top").textContent = top || "—";
   $("stat-top").title = top || "";
+  $("src-auto").textContent = stats.bySource?.auto || 0;
+  $("src-popup").textContent = stats.bySource?.popup || 0;
 
   const ol = $("breakdown");
   ol.innerHTML = "";
