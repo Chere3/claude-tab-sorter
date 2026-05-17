@@ -1,14 +1,88 @@
 # Tab Sorter (Claude Code)
 
-Extensión de Chrome/Chromium que agrupa tus pestañas en categorías generadas por IA usando el **Claude Agent SDK** (`@anthropic-ai/claude-agent-sdk`), que internamente reusa tu login OAuth de Claude Code.
+Extensión de Chrome/Chromium que agrupa tus pestañas en categorías. Dos modos:
+
+- **Auto (local)** — un modelo MiniLM fine-tuneado, exportado a ONNX int8 (~22 MB), que corre dentro del navegador vía `transformers.js`. Clasifica al vuelo cada pestaña nueva por similitud coseno contra prototipos por categoría. Sin red, sin costes.
+- **Manual (Claude)** — el popup envía todas las pestañas al **Claude Agent SDK** (`@anthropic-ai/claude-agent-sdk`) a través de un *native messaging host* local. El SDK reusa tu login OAuth de Claude Code (sin `ANTHROPIC_API_KEY`).
 
 ```
-[ popup ] ── chrome.runtime.sendNativeMessage ──► [ native host (Node ESM) ] ── query() ──► Agent SDK
-                                                                                            │ (bundled claude binary, OAuth)
-[ chrome.tabs.group ] ◄── { groups:[{name,color,tabIds}] } ◄────────────────────────────────┘
+[ popup ] ──┐                                              ┌─► offscreen.js  ─► transformers.js + ONNX
+            ├─► background.js (service worker) ────────────┤
+auto via    │                                              │
+onUpdated ──┘                                              └─► chrome.runtime.connectNative("com.diego.tabsorter")
+                                                                     │
+                                                                     ▼
+                                                              native-host/host.js  (Node ESM)
+                                                                     │  Agent SDK query() · OAuth · JSON schema
+                                                                     ▼
+                                                              {groups:[{name:"💻 Desarrollo", color, tabIds}]}
 ```
 
-Las extensiones no pueden cargar paquetes npm ni ejecutar binarios directamente: usamos **Native Messaging** (un script Node local registrado en `~/Library/Application Support/.../NativeMessagingHosts/`).
+Las extensiones MV3 no pueden cargar paquetes npm ni ejecutar binarios: por eso el SDK vive en un proceso Node externo registrado en `~/Library/Application Support/.../NativeMessagingHosts/`.
+
+## Demo
+
+| Popup | Grupos creados |
+| --- | --- |
+| Stats arriba (total, ejecuciones, top categoría), split local/Claude, breakdown histórico. | Cada grupo lleva su emoji y color (`💻 Desarrollo`, `🎬 Entretenimiento`, `📰 Noticias`, …). |
+
+Categorías disponibles para el modo local (11):
+`💻 Desarrollo` · `🔬 Investigación` · `🤖 IA` · `💬 Redes Sociales` · `🎬 Entretenimiento` · `⚡ Productividad` · `🛒 Compras` · `📰 Noticias` · `💰 Finanzas` · `📚 Aprendizaje` · `✈️ Viajes`
+
+En modo Claude las categorías son libres — el modelo elige nombres apropiados con emoji.
+
+## Resultados del modelo local
+
+Fine-tune de `sentence-transformers/all-MiniLM-L6-v2` con [Multiple Negatives Ranking Loss](https://www.sbert.net/docs/package_reference/losses.html#multiplenegativesrankingloss) sobre 529 ejemplos balanceados a través de 11 categorías. Después se exporta el encoder a ONNX y se cuantiza a int8.
+
+### Configuración
+
+| | |
+| --- | --- |
+| Base model | `sentence-transformers/all-MiniLM-L6-v2` (22 M params) |
+| Dataset | 529 ejemplos · 11 categorías · ~48/categoría |
+| Pares de entrenamiento | 2116 (4 positivos por ejemplo) |
+| Epochs / batch | 8 / 32 |
+| Optimizador | AdamW, lr=2e-5, warmup=100 |
+| Loss | MultipleNegativesRankingLoss |
+| Modelo final | 22.3 MB (ONNX q8) |
+
+### Loss de entrenamiento
+
+![Training loss](docs/training_loss.png)
+
+Loss medio por epoch (MNRL). Baja de 4.18 → 1.31 en 8 epochs; se aplana a partir del epoch 6, indicando convergencia razonable sobre este corpus pequeño.
+
+### Accuracy vs. modelo base
+
+Evaluación leave-one-out con clasificación por centroide más cercano (cada ejemplo se clasifica contra los centroides construidos con los **otros** ejemplos de su categoría):
+
+|                     | Overall | Δ vs. base |
+| ------------------- | ------- | ---------- |
+| MiniLM base         | **77.5 %** | — |
+| Fine-tuned (este repo) | **100.0 %** | **+22.5 pp** |
+
+![Per-category accuracy](docs/category_accuracy.png)
+
+El modelo base sufre especialmente en `Productividad` (0.62), `IA` (0.69) y `Aprendizaje` (0.74) — categorías con mucho solape semántico con otras (productividad↔desarrollo, IA↔desarrollo, aprendizaje↔investigación). El fine-tune separa los clusters limpiamente.
+
+> ⚠️ 100 % LOO sobre el propio corpus de entrenamiento **no implica 100 % en producción** — es una métrica intrínseca, no un test set independiente. El probe set held-out de `train.py` (22 ejemplos nuevos) da **20/22 = 90.9 %**, que es una mejor estimación de la accuracy real. Para tu propio dataset, agrega ejemplos a `finetune/dataset.py` y vuelve a entrenar.
+
+### Matriz de confusión (LOO)
+
+![Confusion matrix](docs/confusion_matrix.png)
+
+Diagonal perfecta — sin confusiones entre categorías en LOO. (De nuevo: medida sobre el corpus de entrenamiento, ver caveat arriba.)
+
+### Estructura del espacio de embeddings
+
+![Embedding clusters](docs/embedding_clusters.png)
+
+Proyección PCA(2) de los embeddings fine-tuneados. Cada punto es una pestaña del dataset, coloreada por categoría. Los clusters son visiblemente separados pese a haber reducido 384 → 2 dimensiones; las dos primeras componentes capturan ~41 % de la varianza.
+
+![Inter-category similarity](docs/category_similarity.png)
+
+Heatmap de similitud coseno entre los centroides de cada categoría. La diagonal vale 1.0; el resto idealmente debe ser bajo. Los pares con mayor similitud residual son `Desarrollo ↔ IA` y `Investigación ↔ Aprendizaje`, lo cual coincide con el solape semántico esperado.
 
 ## Requisitos
 
@@ -39,20 +113,24 @@ Las extensiones no pueden cargar paquetes npm ni ejecutar binarios directamente:
 
 3. **Reinicia el navegador** (cierra todas las ventanas para que recargue los hosts).
 
-4. Abre el popup, pulsa **Categorizar pestañas**.
+4. Abre el popup, activa *Auto* (para clasificación local de pestañas nuevas) o pulsa **Categorizar con Claude** (para procesar todas las pestañas en lote).
 
 ## Uso
 
-- *Categorizar pestañas* → llama a `claude -p` con el listado de pestañas y crea grupos nativos de Chrome.
-- *Deshacer grupos* → quita todos los grupos de la ventana actual.
-- Selector de modelo: `haiku` (más barato/rápido), `sonnet`, `opus`.
+- **Auto** → al cargar una pestaña nueva, el modelo local la clasifica y la mete en su grupo. Funciona offline y sin coste.
+- **Categorizar con Claude** → llama a `claude -p` con el listado y crea grupos nativos de Chrome.
+- **Deshacer grupos** → quita todos los grupos del ámbito actual.
+- Selector de modelo Claude: `haiku` (más barato/rápido), `sonnet`, `opus`.
 - Selector de ámbito: ventana actual o todas las ventanas.
+
+El popup muestra estadísticas: total de pestañas clasificadas, número de ejecuciones, categoría más usada, y split entre el modelo local (🤖) y Claude (✨).
 
 ## Logs / debug
 
 - Native host: `~/.claude-tab-sorter.log`
-- Extensión: clic derecho sobre el icono → *Inspeccionar popup* → consola
+- Popup: clic derecho sobre el icono → *Inspeccionar popup* → consola
 - Service worker: `chrome://extensions` → *Inspeccionar vista: background worker*
+- Offscreen (modelo local): `chrome://extensions` → *Inspeccionar vista: offscreen.html*
 
 ## Test manual del host (sin extensión)
 
@@ -84,22 +162,55 @@ node -e '
 
 ```
 claude-tab-sorter/
-├── extension/
-│   ├── manifest.json        Manifest V3, pide tabs + tabGroups + nativeMessaging
-│   ├── popup.html / .css    UI mínima
-│   ├── popup.js             query tabs → sendNativeMessage → tabs.group / tabGroups.update
-│   └── background.js        service worker (placeholder)
+├── extension/                     Extensión Chrome MV3
+│   ├── manifest.json              Permisos: tabs, tabGroups, nativeMessaging, storage, offscreen
+│   ├── popup.html / .css / .js    UI: stats + controles + resultados
+│   ├── background.js              Service worker: native messaging, auto-clasificación, stats
+│   ├── offscreen.html / .js       Host del modelo local (transformers.js + ONNX)
+│   ├── prototypes.js              11 categorías × ~15 ejemplos para construir centroides
+│   ├── models/tab-classifier-v1/  Modelo ONNX int8 + tokenizer
+│   ├── lib/                       Bundle de transformers.js + ONNX Runtime WASM
+│   └── src/                       Entrada para esbuild
 ├── native-host/
-│   ├── host.js              ESM, native messaging stdin/stdout + Agent SDK query() con json_schema
-│   ├── package.json         Declara @anthropic-ai/claude-agent-sdk
-│   └── node_modules/        (tras `npm install`)
-├── install.sh                Registra el host en NativeMessagingHosts/
+│   ├── host.js                    ESM, framed stdio + Agent SDK query() con json_schema
+│   ├── host.sh                    Wrapper con PATH para apps GUI macOS
+│   └── package.json               Declara @anthropic-ai/claude-agent-sdk
+├── finetune/
+│   ├── dataset.py                 529 ejemplos etiquetados por categoría
+│   ├── train.py                   Fine-tune con MNRL + captura de loss por epoch
+│   ├── export.py                  HF → ONNX → cuantización int8 → layout transformers.js
+│   └── evaluate.py                Métricas + plots (confusion matrix, PCA, similarity)
+├── docs/                          Gráficas embebidas en este README
+│   ├── training_loss.png
+│   ├── confusion_matrix.png
+│   ├── category_accuracy.png
+│   ├── category_similarity.png
+│   ├── embedding_clusters.png
+│   └── evaluation.json
+├── install.sh                     Registra el host en NativeMessagingHosts/
+├── CLAUDE.md                      Guía para futuros agentes Claude Code
 └── README.md
 ```
 
+## Re-entrenar el modelo local
+
+Si quieres entrenar tu propio clasificador (más categorías, más ejemplos, otro idioma):
+
+```bash
+cd finetune
+python -m venv .venv && source .venv/bin/activate
+pip install sentence-transformers optimum[onnxruntime] matplotlib seaborn scikit-learn
+# Edita dataset.py: agrega categorías o ejemplos
+python train.py       # ~80 s en M1 (MPS), guarda output/finetuned + output/training_metrics.json
+python export.py      # convierte a ONNX int8 y copia a extension/models/tab-classifier-v1/
+python evaluate.py    # regenera plots en docs/ + docs/evaluation.json
+```
+
+Después recarga la extensión y bumpea `PROTO_VERSION` en `extension/prototypes.js` para invalidar la cache de prototipos.
+
 ## Notas
 
-- El host llama a `query()` del Agent SDK con `allowedTools: []`, `maxTurns: 3` y `outputFormat: { type: 'json_schema', schema }`. El SDK valida el output contra el schema y lo devuelve en `message.structured_output`.
+- El host llama a `query()` del Agent SDK con `allowedTools: []`, `maxTurns: 1` y un `system_prompt` que fuerza salida JSON estricta. El SDK valida internamente contra el schema y devuelve `message.structured_output`.
 - El SDK de TS empaqueta el binario nativo de Claude Code (`@anthropic-ai/claude-agent-sdk-darwin-arm64`) como optional dependency, así que reusa la sesión OAuth que ya tienes con `claude` — sin API key.
 - El ID de extensión cambia entre cargas sin empaquetar; si lo recargas con otra carpeta tendrás que re-ejecutar `install.sh`.
 - A partir del 15-jun-2026 el uso del SDK con suscripción consumirá del "Agent SDK credit" mensual ([detalles](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan)).

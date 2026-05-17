@@ -1,0 +1,56 @@
+{
+  "base_model": "sentence-transformers/all-MiniLM-L6-v2",
+  "dataset_total": 529,
+  "categories": [
+    "Desarrollo",
+    "Investigación",
+    "IA",
+    "Redes Sociales",
+    "Entretenimiento",
+    "Productividad",
+    "Compras",
+    "Noticias",
+    "Finanzas",
+    "Aprendizaje",
+    "Viajes"
+  ],
+  "base": {
+    "overall_accuracy": 0.775047258979206,
+    "per_category": {
+      "Desarrollo": 0.7647058823529411,
+      "Investigación": 0.8979591836734694,
+      "IA": 0.6938775510204082,
+      "Redes Sociales": 0.7906976744186046,
+      "Entretenimiento": 0.7954545454545454,
+      "Productividad": 0.6170212765957447,
+      "Compras": 0.7916666666666666,
+      "Noticias": 0.7777777777777778,
+      "Finanzas": 0.82,
+      "Aprendizaje": 0.74,
+      "Viajes": 0.8301886792452831
+    }
+  },
+  "finetuned": {
+    "overall_accuracy": 1.0,
+    "per_category": {
+      "Desarrollo": 1.0,
+      "Investigación": 1.0,
+      "IA": 1.0,
+      "Redes Sociales": 1.0,
+      "Entretenimiento": 1.0,
+      "Productividad": 1.0,
+      "Compras": 1.0,
+      "Noticias": 1.0,
+      "Finanzas": 1.0,
+      "Aprendizaje": 1.0,
+      "Viajes": 1.0
+    }
+  },
+  "delta_pp": 22.4952741020794,
+  "training": {
+    "epochs": 8,
+    "batch_size": 32,
+    "pairs": 2116,
+    "final_loss": 1.3092617098964863
+  }
+}

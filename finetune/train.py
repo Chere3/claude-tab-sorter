@@ -4,6 +4,7 @@ Fine-tune sentence-transformers/all-MiniLM-L6-v2 for tab classification.
 Uses BatchAllTripletLoss: each batch needs >= 2 examples of each label, so we
 draw balanced batches manually.
 """
+import json
 import os
 import random
 import shutil
@@ -60,6 +61,47 @@ def main():
     train_loss = losses.MultipleNegativesRankingLoss(model=model)
 
     print(f"training for {EPOCHS} epochs, batch_size={BATCH_SIZE}")
+
+    loss_history = []  # one entry per epoch: {epoch, mean_loss, steps}
+    epoch_buffer = {"sum": 0.0, "n": 0}
+
+    def on_step(score=None, epoch=None, steps=None, **kw):
+        # sentence-transformers calls callback at end of each epoch with
+        # score (eval) — we don't have an evaluator, so we log epoch boundaries.
+        pass
+
+    # Patch the loss module to capture per-step values without touching the
+    # SentenceTransformer.fit() loop. We wrap forward() and accumulate the
+    # scalar loss; we also flush per epoch using a step counter.
+    steps_per_epoch = max(1, len(dataloader))
+    original_forward = train_loss.forward
+    step_counter = {"i": 0, "epoch": 0}
+
+    def wrapped_forward(*args, **kwargs):
+        out = original_forward(*args, **kwargs)
+        try:
+            v = float(out.detach().cpu().item())
+            epoch_buffer["sum"] += v
+            epoch_buffer["n"] += 1
+            step_counter["i"] += 1
+            if step_counter["i"] % steps_per_epoch == 0:
+                mean = epoch_buffer["sum"] / max(1, epoch_buffer["n"])
+                loss_history.append(
+                    {
+                        "epoch": step_counter["epoch"] + 1,
+                        "mean_loss": mean,
+                        "steps": epoch_buffer["n"],
+                    }
+                )
+                step_counter["epoch"] += 1
+                epoch_buffer["sum"] = 0.0
+                epoch_buffer["n"] = 0
+        except Exception:
+            pass
+        return out
+
+    train_loss.forward = wrapped_forward
+
     model.fit(
         train_objectives=[(dataloader, train_loss)],
         epochs=EPOCHS,
@@ -67,6 +109,25 @@ def main():
         show_progress_bar=False,
         optimizer_params={"lr": 2e-5},
     )
+
+    metrics_path = "output/training_metrics.json"
+    with open(metrics_path, "w") as f:
+        json.dump(
+            {
+                "base_model": BASE_MODEL,
+                "epochs": EPOCHS,
+                "batch_size": BATCH_SIZE,
+                "pairs_per_example": PAIRS_PER_EXAMPLE,
+                "warmup_steps": WARMUP_STEPS,
+                "dataset_examples": len(items),
+                "training_pairs": len(pairs),
+                "categories": list(CATEGORIES),
+                "loss_history": loss_history,
+            },
+            f,
+            indent=2,
+        )
+    print(f"wrote {metrics_path}: {len(loss_history)} epoch entries")
 
     if os.path.exists(OUTPUT_DIR):
         shutil.rmtree(OUTPUT_DIR)
