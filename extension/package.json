@@ -1,0 +1,14 @@
+{
+  "name": "tab-sorter-extension",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/offscreen-entry.js --bundle --format=esm --outfile=lib/transformers.bundle.js --target=es2022 --platform=browser '--external:node:*' '--define:process.env.NODE_ENV=\"production\"'"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.0.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Fine-tune intermediate artefacts (final ONNX is committed under extension/models/)
+finetune/output/
+finetune/checkpoints/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Runtime logs
+.claude-tab-sorter.log

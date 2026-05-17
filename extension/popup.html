@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <title>Tab Sorter</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <div class="title">
+        <span class="logo">🗂️</span>
+        <h1>Tab Sorter</h1>
+      </div>
+      <span id="tab-count" class="chip">—</span>
+    </header>
+
+    <div class="stats" id="stats">
+      <div class="stat">
+        <span class="stat-value" id="stat-total">0</span>
+        <span class="stat-label">clasificadas</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value" id="stat-runs">0</span>
+        <span class="stat-label">ejecuciones</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value" id="stat-top">—</span>
+        <span class="stat-label">top categoría</span>
+      </div>
+    </div>
+
+    <label class="row toggle">
+      <span>
+        <strong>Auto</strong>
+        <span class="muted small">clasifica nuevas pestañas al cargar</span>
+      </span>
+      <input type="checkbox" id="auto" />
+    </label>
+
+    <div class="controls">
+      <label class="row">
+        <span>Modelo</span>
+        <select id="model">
+          <option value="haiku" selected>Haiku (rápido)</option>
+          <option value="sonnet">Sonnet</option>
+          <option value="opus">Opus</option>
+        </select>
+      </label>
+      <label class="row">
+        <span>Ámbito</span>
+        <select id="scope">
+          <option value="currentWindow" selected>Ventana actual</option>
+          <option value="all">Todas las ventanas</option>
+        </select>
+      </label>
+    </div>
+
+    <button id="categorize" class="primary">
+      <span class="btn-icon">✨</span>
+      <span>Categorizar con Claude</span>
+    </button>
+    <button id="ungroup" class="secondary">Deshacer grupos</button>
+
+    <div id="model-status" class="status muted"></div>
+    <div id="status" class="status"></div>
+
+    <section class="results" id="results-section" hidden>
+      <h2>Esta ejecución</h2>
+      <ol id="groups"></ol>
+    </section>
+
+    <section class="breakdown" id="breakdown-section" hidden>
+      <header class="breakdown-head">
+        <h2>Histórico</h2>
+        <button id="reset-stats" class="link">reset</button>
+      </header>
+      <ol id="breakdown"></ol>
+    </section>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
