@@ -2,88 +2,144 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## What this is
+## Orientation
 
-A Chrome/Chromium MV3 extension that groups browser tabs by topic. It has two classification paths:
+A Chrome/Chromium MV3 extension that groups open tabs into named tab groups. Two independent classifiers produce the same output shape (`title → "<emoji> <Category>" + color`) through completely different machinery:
 
-1. **Local (auto mode)** — an offscreen document runs a fine-tuned MiniLM ONNX model via `@huggingface/transformers` (transformers.js) and classifies each new tab by cosine similarity to per-category prototype vectors. Used by the `chrome.tabs.onUpdated` listener in `background.js` for incremental, on-the-fly grouping.
-2. **Cloud (button)** — the popup batches all current tabs, the service worker forwards them through Native Messaging to a local Node host (`native-host/host.js`), and the host calls the Claude Agent SDK (`query()` from `@anthropic-ai/claude-agent-sdk`) with a JSON-schema-constrained output. The SDK reuses the user's `claude /login` OAuth session — there is no `ANTHROPIC_API_KEY`.
+| | Local path | Cloud path |
+|---|---|---|
+| Trigger | `chrome.tabs.onUpdated` (auto toggle) | popup button, manual |
+| Classifier | fine-tuned MiniLM ONNX, cosine vs. category centroids | Claude Agent SDK `query()` |
+| Runs in | offscreen document | external Node process |
+| Categories | fixed 11, from `extension/prototypes.js` | free-form, model invents them |
+| Cost / network | none | consumes the user's Claude subscription |
 
-Chrome extensions cannot load npm packages or spawn binaries, which is why the Agent SDK lives in a separately registered Native Messaging host process.
+The unusual shape of this repo follows from two hard platform constraints: MV3 service workers cannot run transformers.js (hence an offscreen document), and extensions cannot load npm packages or spawn binaries (hence the Agent SDK lives behind Native Messaging). Nearly every awkward indirection below traces back to one of those two.
 
-## Architecture map
+There is **no test runner and no linter**. The only end-to-end check is the manual framed-stdio pipe in README.md. Verify changes by loading the unpacked extension and reading the four consoles listed under *Debugging*.
 
-```
-popup.js  ─┐                                     ┌─► offscreen.js  ─►  transformers.js + ONNX
-           ├─► background.js (service worker) ──►┤   (local embeddings, cosine vs PROTOTYPES)
-auto via   │                                     │
-onUpdated ─┘                                     └─► chrome.runtime.connectNative("com.diego.tabsorter")
-                                                          │
-                                                          ▼
-                                                    native-host/host.js  (Node ESM)
-                                                          │  framed stdio (uint32 LE length + JSON body)
-                                                          ▼
-                                                    @anthropic-ai/claude-agent-sdk query()
-                                                          │  bundled `claude` binary, OAuth session
-                                                          ▼
-                                                    {groups:[{name,color,tabIds}]}
-```
+## Execution contexts
 
-Key behavioural details that aren't obvious from any single file:
+Five contexts, each with different capabilities. Getting these wrong is the most common source of silent breakage.
 
-- **Native messaging framing.** Both `background.js` ↔ `host.js` and the manual test command rely on the Chrome native messaging framing: 4-byte little-endian length header followed by a UTF-8 JSON body. `host.js` implements its own framed reader/writer over stdin/stdout; do not `console.log` from the host — anything on stdout corrupts the protocol. Use the `log()` helper which writes to `~/.claude-tab-sorter.log`.
-- **Request multiplexing.** The service worker assigns a monotonic `requestId` per call and maps responses back via `pending` map. `host.js` serialises handler execution with a `Promise` chain so SDK queries don't interleave but reads keep draining. Preserve `requestId` round-tripping when adding new message types.
-- **Offscreen document lifecycle.** transformers.js cannot run in an MV3 service worker (no DOM, no WASM threads in some paths), so `background.js` creates an `OFFSCREEN_DOCUMENT` (`offscreen.html` → `offscreen.js`) with reason `WORKERS` and pings it before sending classify batches. The offscreen doc is the single owner of the model + prototype vectors.
-- **Prototype caching.** `PROTOTYPES` (in `extension/prototypes.js`) is the seed corpus. On first run, `offscreen.js` embeds each example, mean-normalises per category, and caches the resulting vectors in `chrome.storage.local` under `prototypes_v${PROTO_VERSION}`. Bumping `PROTO_VERSION` invalidates the cache and forces recompute. The `reset-prototypes` offscreen message clears just the cache.
-- **Auto-classify pipeline.** `chrome.tabs.onUpdated` only fires the queue when `status === "complete"`, `auto` is enabled in storage, and the tab's host changed since last classify (`lastHost` map). Updates debounce via `DEBOUNCE_MS` (600 ms) and batch per `windowId` before calling `classifyLocal`. Below `SIM_THRESHOLD` (0.65) the tab is left ungrouped.
-- **Cloud mode constraints.** `host.js` calls `query()` with `allowedTools: []`, `maxTurns: 1`, `settingSources: []` and a strict JSON schema (`BATCH_SCHEMA` / `INCREMENTAL_SCHEMA`). Group colors are restricted to Chrome's tabGroup palette (see `COLORS` / `ALLOWED_COLORS`); anything else falls back to `"grey"`. The SDK's `message.structured_output` is preferred; `extractJson` is the fallback path.
-- **Two prompt shapes.** `categorize` builds groups from scratch; `classify-incremental` reuses existing group names verbatim ("usa EXACTAMENTE su nombre"). The incremental path is wired in `host.js` but is currently only used by tests/manual invocations — the auto pipeline uses the local embedder, not the SDK.
-- **Extension ID couples to native host manifest.** `install.sh` writes `~/Library/Application Support/<Browser>/NativeMessagingHosts/com.diego.tabsorter.json` with `allowed_origins: ["chrome-extension://<EXT_ID>/"]`. Reloading the unpacked extension typically changes the ID and breaks the connection until you re-run `install.sh <NEW_ID>`.
+| Context | File | Module type | Can it touch `chrome.storage`? | Notes |
+|---|---|---|---|---|
+| Service worker | `background.js` | classic | yes | sole owner of the native port + dataset writes; dies and restarts freely, so all state that must survive lives in storage |
+| Offscreen doc | `offscreen.js` | **ESM** | **no — proxies via background** | sole owner of the model + prototype vectors |
+| Popup | `popup.js` | **classic** | yes | cannot `import`; this is why it can't reuse `prototypes.js` and duplicates `ALLOWED_COLORS` |
+| Dataset viewer | `dataset.js` | **ESM** | reads directly, writes via background | imports `prototypes.js`, so `dataset.html` must keep `type="module"` |
+| Native host | `native-host/host.js` | Node ESM | n/a | **never write to stdout** — it is the wire protocol |
 
-## Working in the repo
+In-memory state in `background.js` (`lastHost`, `recentProgrammatic`, `pending`, `tabQueue`) is lost on service-worker eviction. That is tolerated by design; do not "fix" it by promoting it to storage without thinking through the write amplification described below.
 
-### Native host
+## The message bus
+
+Everything crosses a context boundary as a message. Adding a feature almost always means adding a case here.
+
+**Popup / offscreen → background** (`chrome.runtime.onMessage`, `background.js:418`):
+`host-request` (proxies to native host), `warmup-local`, `mark-programmatic`, `bump-stats`, `reset-stats`, `log-events`, `dataset-count`, `clear-dataset`, `relabel-entry`, `delete-entry`, and `storage-get`/`storage-set` (guarded by `target: "background"`, used only by the offscreen doc).
+
+**Background → offscreen** (guarded by `target: "offscreen"`, `offscreen.js:170`):
+`ping`, `warmup`, `classify-batch`, `reset-prototypes`.
+
+**Background ↔ native host** (framed stdio):
+`ping`, `categorize`, `classify-incremental`.
+
+Two protocol rules that are load-bearing:
+
+- **`requestId` round-tripping.** `sendToHost` (`background.js:37`) assigns a monotonic id and resolves the matching entry in `pending`; `host.js` echoes it back on every reply, including errors. A handler that drops `requestId` leaks a pending promise until `REQUEST_TIMEOUT_MS` (120 s).
+- **Native messaging framing.** 4-byte little-endian length header, then a UTF-8 JSON body. `host.js` implements its own reader/writer (`host.js:20-77`) because it also has to serve the manual test pipe. Any stray `console.log` in the host corrupts the stream — use `log()`, which appends to `~/.claude-tab-sorter.log`.
+
+## Invariants you will break by accident
+
+These are the non-obvious rules. Each one has already been encoded somewhere and is easy to violate from a new code path.
+
+1. **Any code that calls `chrome.tabs.group()` must first call `markProgrammatic([tabIds])`.** A second `onUpdated` listener (`background.js:409`) watches `changeInfo.groupId` to detect the user manually dragging a tab into a group, and treats that destination as ground-truth training data. The only thing separating "user corrected us" from "we moved it ourselves" is the in-memory `recentProgrammatic` map with a 4 s TTL. `applyAssignments` marks inline; the popup posts `mark-programmatic` and awaits it before grouping (`popup.js:150`). Miss this and you silently poison the dataset with fabricated user corrections.
+
+2. **Group titles are the join key.** There is no group id persisted anywhere. `applyAssignments` matches existing groups by exact title string (`background.js:300`), stats accumulate keyed by title, and the incremental cloud prompt tells the model to reuse names verbatim. Titles are always `"<emoji> <Name>"` — the local path builds them in `displayName()` (`offscreen.js:142`), the cloud path relies on the prompt asking for an emoji prefix. Changing the emoji of a category orphans all prior stats for it.
+
+3. **Colors must be validated at every boundary.** `chrome.tabGroups` rejects anything outside the 9-value palette. The list is duplicated in three places — `background.js:2`, `popup.js:1`, `host.js:79` — and all three must stay in sync. Always fall back to `"grey"` (British spelling).
+
+4. **`PROTO_VERSION` is the cache-busting mechanism for embeddings.** Prototype centroids are computed once, then cached in `chrome.storage.local` under `prototypes_v${PROTO_VERSION}` (`offscreen.js:76`). Any change to the model weights *or* to `PROTOTYPES` examples requires bumping `PROTO_VERSION` in `extension/prototypes.js`, otherwise stale vectors from the previous embedder are silently reused.
+
+5. **Two corpora define the categories and they are not the same file.** `finetune/dataset.py` (~529 examples) trains the embedder; `extension/prototypes.js` (11 categories × ~15–20 examples, each carrying `color` + `emoji`) builds the runtime centroids. Adding a category means editing both, then retraining, re-exporting, and bumping `PROTO_VERSION`.
+
+6. **The extension id is baked into the native host manifest.** `install.sh` writes `allowed_origins: ["chrome-extension://<EXT_ID>/"]`. Loading the unpacked extension from a different folder changes the id and silently breaks the cloud path until `install.sh <NEW_ID>` is re-run and the browser is fully quit and relaunched.
+
+7. **Dataset entries are addressed by array index.** The viewer stamps `_i` from the raw array position (`dataset.js:38`) and `relabel-entry` / `delete-entry` mutate `dataset[i]` by that index (`background.js:490`). Anything that reorders or shifts the array invalidates open viewer state — including the `splice(0, …)` rotation at `DATASET_MAX_ENTRIES` (`background.js:159`). Do not introduce new mutations that shift indices without switching to stable ids.
+
+## Known defects (verified, not yet fixed)
+
+Do not "document around" these — they are real, and prior versions of this file described some of them incorrectly.
+
+- **The JSON schemas are dead code.** `BATCH_SCHEMA` and `INCREMENTAL_SCHEMA` (`host.js:132`, `host.js:154`) are passed as `schema` into `runQuery`, which destructures the parameter and never forwards it to `query()`'s options (`host.js:188-204`). Nothing enforces them. Consequently `message.structured_output` is normally absent and the real parse path is `extractJson(resultText)` — a regex that grabs the first `{…}` block. If you wire the schemas in, verify against the installed SDK version before claiming validation works.
+
+- **`stats.bySource` and `dataset[].source` use different vocabularies for the same event.** The cloud run records `source: "claude"` into the dataset (`popup.js:177`) but reports `source: "popup"` to `bumpStats` (`popup.js:184`), and the popup reads back `stats.bySource.popup` (`popup.js:321`). So `bySource` keys are `auto`/`popup`, while dataset keys are `auto`/`claude`/`manual`. Normalising one side without the other blanks out the popup's local-vs-Claude split.
+
+- **The two paths disagree on which tabs are eligible.** `isClassifiable` (`background.js:165`) requires `http(s)` and excludes pinned and incognito tabs. `isCategorizable` (`popup.js:30`) accepts `https?|file|ftp` and excludes neither. The cloud path therefore groups tabs the auto path would never touch, and can ship `file://` URLs to the model.
+
+- **`stats.runs` conflates two meanings.** `bumpStats` increments it once per call (`background.js:339`), which is once per user-initiated cloud run but also once per debounced auto batch — so the popup's "ejecuciones" counter grows on its own during normal browsing.
+
+- **Every dataset write is a full read-modify-write of the whole array.** `logEvents`, `relabel-entry`, and `delete-entry` each load, mutate, and re-serialise up to `DATASET_MAX_ENTRIES = 50000` entries. This is why `unlimitedStorage` is declared, but it also means dataset writes get slower linearly with usage.
+
+- **The viewer's `dataset.py` export labels categories with emoji; `finetune/dataset.py` does not.** The export emits `CATEGORIES = ["💻 Desarrollo", …]` (`dataset.js:266` uses the display label), while the checked-in corpus uses bare `"Desarrollo"` (`finetune/dataset.py:7`) and `prototypes.js` keeps the emoji in a separate field. The export is structurally drop-in — it provides `CATEGORIES`, `LABEL2ID`, `DATASET`, `build_inputs()`, which is exactly what `train.py:16` and `evaluate.py:26` import — but the label strings do not round-trip into `prototypes.js` keys. It also does not enforce a minimum example count per category, and `train.py` samples 4 positives per example, so a thin category degenerates.
+
+## Pipelines
+
+**Auto (local).** `onUpdated` fires only when `status === "complete"`, the tab is classifiable, `auto` is on in storage, and the tab's host differs from `lastHost` for that tab id (`background.js:190` — this is what stops SPA navigations from re-classifying forever). Matching tabs queue, debounce `DEBOUNCE_MS` (600 ms), batch by `windowId`, then `ensureOffscreen()` (create + ping up to 20 × 250 ms) and `classify-batch`. Below `SIM_THRESHOLD` (0.65, `offscreen.js:11`) `category` is `null` and the tab is left alone — but `fallbackCategory` still carries the argmax, and that is what the dataset records, which is what makes low-confidence cases reviewable later.
+
+**Cloud.** The popup collects tabs for the chosen scope, posts `host-request`, and the service worker forwards over the port. `host.js` serialises handlers through a promise chain (`host.js:260`) so SDK queries never interleave while stdin keeps draining. `query()` runs with `allowedTools: []`, `maxTurns: 1`, `settingSources: []` and a system prompt demanding bare JSON. The SDK reuses the user's `claude /login` OAuth session — there is no `ANTHROPIC_API_KEY` anywhere in this repo, and there should not be one.
+
+Two prompt shapes exist: `categorize` (build groups from scratch) and `classify-incremental` (reuse existing group names verbatim). The incremental handler is fully wired but **currently unreachable from the UI** — the auto path uses the local embedder instead. It is reachable from the manual test pipe.
+
+**Dataset capture (opt-in, off by default).** When `datasetEnabled` is set, all three sources append to `chrome.storage.local.dataset` via `log-events`. Entry shape: `{ ts, title, url, host, category, fallbackCategory, similarity, color, source: "auto"|"claude"|"manual", userCategory, confirmedAt?, manualMove? }`. `url` is truncated to host + 80 chars of path, `title` to 200 chars. On a manual group change, `handleManualGroupChange` scans the last 500 entries for an unconfirmed prediction with the same URL and upgrades it into a labelled pair (`userCategory` + `manualMove`); failing that it logs a fresh `source: "manual"` event.
+
+## Commands
+
 ```bash
-cd native-host && npm install         # installs @anthropic-ai/claude-agent-sdk (incl. bundled claude binary)
-```
-The host wrapper (`native-host/host.sh`) prepends `/opt/homebrew/bin` and `/usr/local/bin` to `PATH` because Chrome on macOS launches native hosts without the user's interactive PATH. If `node` lives elsewhere, edit `host.sh`.
-
-### Extension bundle
-The offscreen doc imports `lib/transformers.bundle.js`, which is the prebuilt esbuild output of `src/offscreen-entry.js`. Rebuild only if you change the transformers.js entry:
-```bash
+# Extension bundle — only when the transformers.js glue in src/ changes.
 cd extension && npm install && npm run build
 ```
-The other files under `extension/lib/` (`ort-wasm-simd-threaded.jsep.{mjs,wasm}`) are the ONNX Runtime web WASM artefacts; `offscreen.js` points transformers.js at them via `env.backends.onnx.wasm.wasmPaths`. The model lives at `extension/models/tab-classifier-v1/` and is loaded with `env.allowLocalModels=true` + `env.allowRemoteModels=false`, so the model name in `MODEL_NAME` must match the folder name exactly.
 
-### Installing into the browser
+`extension/lib/transformers.bundle.js` is a **committed build artifact** produced by esbuild from `src/offscreen-entry.js`. `offscreen.js` imports it directly, so editing the entry file without rebuilding has no effect. The ONNX Runtime WASM files sit alongside it in `lib/`, are pointed at by `env.backends.onnx.wasm.wasmPaths`, and are listed in `web_accessible_resources`.
+
 ```bash
-./install.sh <EXTENSION_ID>          # chrome (default)
-./install.sh <EXTENSION_ID> brave    # brave | edge | arc | chromium also supported
+# Native host.
+cd native-host && npm install        # pulls @anthropic-ai/claude-agent-sdk + bundled claude binary
+./install.sh <EXTENSION_ID>          # chrome (default) | brave | edge | arc | chromium
 ```
-Restart the browser fully (quit, not just close windows) so it re-reads the native host registry. Logs:
-- Native host: `~/.claude-tab-sorter.log`
-- Service worker: `chrome://extensions` → "Inspect views: service worker"
-- Popup: right-click the toolbar icon → "Inspect popup"
-- Offscreen: `chrome://extensions` → "Inspect views: offscreen.html"
 
-### Manual host test (no extension required)
-See README.md for the exact `node -e '…'` pipe that frames a `categorize` message into `host.js` and unframes the response. Useful for checking the SDK + OAuth path in isolation.
+`host.sh` prepends `/opt/homebrew/bin` and `/usr/local/bin` to `PATH` because Chrome on macOS launches native hosts without an interactive PATH. If `node` lives elsewhere, edit that wrapper. `install.sh` is macOS-only (hardcoded `~/Library/Application Support/…` paths).
 
-### Fine-tuning the local classifier
-`finetune/` is a self-contained Python project (uses its own `.venv`). The pipeline:
 ```bash
-cd finetune
-source .venv/bin/activate            # or recreate with `python -m venv .venv && pip install -r ...`
-python train.py                      # fine-tunes MiniLM with MNRL on the labelled corpus in dataset.py
-python export.py                     # extracts encoder → ONNX → int8 quantize → copies into extension/models/tab-classifier-v1/
+# Fine-tuning — self-contained Python project with its own .venv.
+cd finetune && source .venv/bin/activate
+python train.py      # MNRL fine-tune → output/finetuned + output/training_metrics.json
+python export.py     # encoder → ONNX → int8 → ../extension/models/tab-classifier-v1/
+python evaluate.py   # regenerates docs/*.png + docs/evaluation.json
 ```
-`train.py` prints accuracy against a held-out probe set; `export.py` writes the transformers.js layout (`config.json`, `tokenizer*.json`, `vocab.txt`, `onnx/model_quantized.onnx`). After re-exporting, reload the extension; you may also want to bump `PROTO_VERSION` in `extension/prototypes.js` so the cached prototype vectors are recomputed against the new embedder.
 
-## Conventions worth keeping
+Run these from inside `finetune/` — the paths are relative. After `export.py`, reload the extension **and** bump `PROTO_VERSION`.
 
-- **Language.** User-visible strings (popup, prompts) are in Spanish; code identifiers and comments are in English. Match the surrounding style.
-- **Colors.** Whenever you accept a color from the model or storage, validate it against the 9-value `ALLOWED_COLORS` / `COLORS` list and fall back to `"grey"`. The Chrome `tabGroups` API rejects anything else.
-- **Storage shape.** `chrome.storage.local` keys in use: `auto` (bool), `model` (`haiku|sonnet|opus`), `scope` (`currentWindow|all`), `modelLoad` (offscreen progress object), `prototypes_v<N>` (cached embeddings), `stats` (`{ total, byCategory, runs, lastRun, bySource }`), `datasetEnabled` (bool, opt-in), `dataset` (array of classification events, see below). The offscreen doc reads/writes via `chrome.runtime.sendMessage({target:"background",type:"storage-get|set"})` rather than touching `chrome.storage` directly, because offscreen contexts have limited storage access in some Chrome builds.
-- **Dataset collection (opt-in).** When `datasetEnabled` is true, every classification (auto path inside `applyAssignments`, popup/Claude path inside `categorize()`, *and* manual drag-and-drop into a tab group) is appended to `chrome.storage.local.dataset` via the `log-events` background message. Each entry: `{ ts, title, url, host, category, fallbackCategory, similarity, color, source: "auto"|"claude"|"manual", userCategory, confirmedAt?, manualMove? }`. Capped at `DATASET_MAX_ENTRIES = 50000`; manifest declares `unlimitedStorage` to lift the 10 MB quota. The viewer (`dataset.html`, `dataset.js`, `dataset.css`) lets the user filter, inline-relabel, bulk-relabel, and export to JSONL or to a drop-in replacement `dataset.py` for `finetune/`. The `dataset.js` page imports `./prototypes.js` so the script tag in `dataset.html` MUST use `type="module"`.
-- **Manual move capture.** A second `chrome.tabs.onUpdated` listener watches for `changeInfo.groupId` changes (drag-into-group, right-click → add to group, rename → reassign). When the move was NOT triggered by us, the handler either: (a) finds the most recent unconfirmed prediction for that URL in the dataset and stamps `userCategory = <new group title>` + `manualMove: true` + `confirmedAt`, turning the entry into a labeled training pair; or (b) if there is no prior prediction, logs a new event with `source: "manual"`. The "is this our own move?" guard uses an in-memory `recentProgrammatic` Map with TTL — `applyAssignments` calls `markProgrammatic([tabId])` before each `chrome.tabs.group()`, and the popup posts `mark-programmatic` to background before its own grouping calls. TTL is `PROGRAMMATIC_TTL_MS = 4000`; anything beyond that is treated as a user move.
-- **Stats accounting.** Group titles produced by either path are stored as `"<emoji> <name>"` (e.g. `💻 Desarrollo`). Local prototypes carry their emoji in `PROTOTYPES[cat].emoji`; the cloud prompts instruct Claude to prefix names with an emoji. Both paths funnel into `bumpStats(byCategoryMap, source)` in `background.js` — the popup posts a `bump-stats` message after manual runs, the auto pipeline calls it directly inside `applyAssignments` once per moved/created tab. A tab is counted exactly when its group title changes (creation or move), so re-running with everything already grouped does **not** inflate the counter.
+```bash
+# Re-etiquetado del corpus real y re-entrenamiento (finetune/relabel/).
+python relabel/consolidate.py   # valida los 14 shards anotados → labeled.json + agreement.json + disagreement.json
+python relabel/train_v2.py      # re-entrena y evalúa dos splits → output/metrics_v2.json
+python relabel/report.py        # gráficas en docs/relabel/ + RELABEL_REPORT.md
+python relabel/export_v2.py     # dataset_v2.py + prototypes_v2.js + models/tab-classifier-v2/
+```
+
+`finetune/relabel/` contiene un corpus de **navegación real** (2017 items únicos deduplicados de 4053 eventos exportados por el viewer) re-etiquetado por 14 anotadores LLM independientes trabajando en sectores por host. Puntos que condicionan cómo se lee cualquier métrica de aquí:
+
+- **No hay ground truth humano.** El export original traía `userCategory: null` en el 100% de los eventos. Las etiquetas son consenso de anotadores, no verdad. Cualquier "accuracy" contra ellas mide concordancia con ese consenso; su credibilidad descansa en el Fleiss' κ reportado en `agreement.json`, medido sobre un gold set de 48 items que los 14 anotadores etiquetaron a ciegas.
+- **La anotación fue ciega a propósito.** Los shards no incluyen `localCategory` ni `similarity`; mostrar la predicción de MiniLM ancla al anotador y subestima la tasa de error.
+- **`train_v2.py` evalúa dos splits y ambos son necesarios.** El split por host (ningún dominio en train y test a la vez) mide generalización a sitios nuevos; el aleatorio mide rendimiento en sitios ya vistos, que es el uso real. `music.youtube.com` y `youtube.com` van forzados a train: juntos son el 38% del corpus y en test lo dominarían. Comparar contra el LOO de `train.py` (v1) no es válido — aquel se mide sobre el propio corpus de entrenamiento.
+- **`export_v2.py` no despliega nada.** Escribe `dataset_v2.py`, `prototypes_v2.js` y `models/tab-classifier-v2/` en paralelo a los actuales; activar la v2 exige mover archivos, cambiar `MODEL_NAME` en `offscreen.js` y bumpear `PROTO_VERSION`, y es una decisión explícita.
+
+**Debugging.** Native host → `~/.claude-tab-sorter.log`. Service worker, offscreen doc → `chrome://extensions` → "Inspect views". Popup → right-click the toolbar icon → "Inspect popup". The offscreen console is the only place local classification errors surface.
+
+## Conventions
+
+- **Language split.** User-facing strings (popup, dataset viewer, prompts sent to Claude) are Spanish; identifiers, comments, and log lines are English. Match whichever side you are editing.
+- **Storage keys.** `auto`, `model` (`haiku|sonnet|opus`), `scope` (`currentWindow|all`), `modelLoad`, `prototypes_v<N>`, `stats`, `datasetEnabled`, `dataset`.
+- **Error style.** Handlers reply `{ ok: true, … }` / `{ ok: false, error }` rather than throwing across a boundary; per-tab failures inside a batch are caught and logged so one bad tab cannot abort the batch (`background.js:322`).

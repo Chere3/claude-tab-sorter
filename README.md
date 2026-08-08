@@ -66,13 +66,52 @@ Evaluación leave-one-out con clasificación por centroide más cercano (cada ej
 
 El modelo base sufre especialmente en `Productividad` (0.62), `IA` (0.69) y `Aprendizaje` (0.74) — categorías con mucho solape semántico con otras (productividad↔desarrollo, IA↔desarrollo, aprendizaje↔investigación). El fine-tune separa los clusters limpiamente.
 
-> ⚠️ 100 % LOO sobre el propio corpus de entrenamiento **no implica 100 % en producción** — es una métrica intrínseca, no un test set independiente. El probe set held-out de `train.py` (22 ejemplos nuevos) da **20/22 = 90.9 %**, que es una mejor estimación de la accuracy real. Para tu propio dataset, agrega ejemplos a `finetune/dataset.py` y vuelve a entrenar.
+> ### ⚠️ Estas cifras no se sostuvieron en datos reales
+>
+> El 100 % es LOO **sobre el propio corpus de entrenamiento** — una métrica intrínseca, no un test set independiente. Tras dos meses de uso real (4053 pestañas), el modelo se evaluó contra un corpus re-etiquetado de forma independiente y el resultado fue muy distinto:
+>
+> | | Accuracy (sitios ya vistos) | macro-F1 |
+> | --- | --- | --- |
+> | MiniLM base | 71.4 % | 56.7 % |
+> | Fine-tuned v1 (el de arriba) | **69.2 %** | **49.7 %** |
+> | Re-entrenado con datos reales (v2) | **83.5 %** | **68.4 %** |
+>
+> El fine-tune v1 quedó **por debajo del modelo base sin tocar**: el corpus sintético de `finetune/dataset.py` no representaba la navegación real. En producción v1 discrepa del criterio correcto en **~36 % de las pestañas**, y falla con similitud alta (0.80–0.86), es decir con confianza injustificada.
+>
+> Detalle completo, metodología y gráficas en **[finetune/relabel/RELABEL_REPORT.md](finetune/relabel/RELABEL_REPORT.md)**.
 
 ### Matriz de confusión (LOO)
 
 ![Confusion matrix](docs/confusion_matrix.png)
 
 Diagonal perfecta — sin confusiones entre categorías en LOO. (De nuevo: medida sobre el corpus de entrenamiento, ver caveat arriba.)
+
+## Re-etiquetado con datos reales
+
+`finetune/relabel/` contiene el ciclo completo de corrección del modelo a partir de uso real: 4053 eventos exportados por el visor, deduplicados a 2017 pestañas únicas y re-etiquetadas por **14 anotadores LLM independientes** trabajando en sectores por host, con anotación ciega (sin ver la predicción del modelo, para no anclarlos) y un gold set incrustado para medir acuerdo.
+
+| | |
+| --- | --- |
+| Corpus | 2017 items únicos · 285 hosts · jun–ago 2026 |
+| Anotadores | 14 × Codex `gpt-5.6-luna`, sectorizados por host |
+| Acuerdo inter-anotador | **Fleiss' κ = 0.805** (sustancial) sobre 48 items gold |
+| Desacuerdo del modelo v1 | **36 %** por item · 32 % ponderado por visitas |
+| Modelo v2 | 83.5 % accuracy · **91.4 % ponderada por visitas** |
+
+```bash
+cd finetune && source .venv/bin/activate
+python relabel/consolidate.py   # valida shards → labeled.json + agreement.json + disagreement.json
+python relabel/train_v2.py      # re-entrena y evalúa dos splits → output/metrics_v2.json
+python relabel/report.py        # gráficas en docs/relabel/ + RELABEL_REPORT.md
+python relabel/export_v2.py     # dataset_v2.py + prototypes_v2.js + models/tab-classifier-v2/
+```
+
+Dos cosas que conviene leer antes de fiarse de estos números:
+
+- **No hay ground truth humano.** El export traía `userCategory: null` en el 100 % de los eventos, así que las etiquetas son consenso de anotadores LLM, no verdad. Su credibilidad descansa en el κ reportado.
+- **Se evalúan dos splits porque miden cosas distintas.** Por host (ningún dominio en train y test) mide generalización a sitios nuevos: 53.8 %. Aleatorio mide el caso de uso real, revisitar los mismos sitios: 83.5 %.
+
+El informe además recomienda **recalibrar `SIM_THRESHOLD`**: el modelo v2 produce similitudes más altas y el 0.65 actual dejaría de filtrar nada (100 % de cobertura). El punto de operación sugerido es 0.85 — agrupa el 86 % de las pestañas acertando el 90 %.
 
 ### Estructura del espacio de embeddings
 
@@ -176,10 +215,16 @@ claude-tab-sorter/
 │   ├── host.sh                    Wrapper con PATH para apps GUI macOS
 │   └── package.json               Declara @anthropic-ai/claude-agent-sdk
 ├── finetune/
-│   ├── dataset.py                 529 ejemplos etiquetados por categoría
+│   ├── dataset.py                 529 ejemplos sintéticos etiquetados por categoría
 │   ├── train.py                   Fine-tune con MNRL + captura de loss por epoch
 │   ├── export.py                  HF → ONNX → cuantización int8 → layout transformers.js
-│   └── evaluate.py                Métricas + plots (confusion matrix, PCA, similarity)
+│   ├── evaluate.py                Métricas + plots (confusion matrix, PCA, similarity)
+│   └── relabel/                   Re-etiquetado con datos reales (ver sección arriba)
+│       ├── ANNOTATION_GUIDE.md    Manual de anotación: taxonomía + reglas de desempate
+│       ├── consolidate.py         Valida shards, mide acuerdo (Fleiss' κ), consolida corpus
+│       ├── train_v2.py            Re-entrena y evalúa split por host + split aleatorio
+│       ├── report.py              Gráficas + RELABEL_REPORT.md
+│       └── export_v2.py           dataset_v2.py + prototypes_v2.js + modelo ONNX v2
 ├── docs/                          Gráficas embebidas en este README
 │   ├── training_loss.png
 │   ├── confusion_matrix.png
@@ -188,7 +233,6 @@ claude-tab-sorter/
 │   ├── embedding_clusters.png
 │   └── evaluation.json
 ├── install.sh                     Registra el host en NativeMessagingHosts/
-├── CLAUDE.md                      Guía para futuros agentes Claude Code
 └── README.md
 ```
 

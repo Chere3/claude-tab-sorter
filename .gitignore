@@ -20,3 +20,17 @@ finetune/checkpoints/
 
 # Runtime logs
 .claude-tab-sorter.log
+
+# Corpus de navegación personal — NO publicar.
+# El re-etiquetado (finetune/relabel/) parte de un export del visor con títulos y URLs
+# reales. Se publican los scripts, el manual, el informe sanitizado y las gráficas
+# agregadas; los datos crudos y todo lo derivado de ellos que conserve texto, no.
+finetune/relabel/items.json
+finetune/relabel/labeled.json
+finetune/relabel/manifest.json
+finetune/relabel/agreement.json
+finetune/relabel/disagreement.json
+finetune/relabel/shards/
+finetune/relabel/out/
+finetune/relabel/train_v2.log
+finetune/dataset_v2.py
