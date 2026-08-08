@@ -18,7 +18,7 @@ El dataset original **no contiene ninguna etiqueta humana**: los 4053 eventos so
 
 Interpretación de κ (Landis & Koch): <0.20 pobre · 0.21–0.40 aceptable · 0.41–0.60 moderado · 0.61–0.80 sustancial · >0.80 casi perfecto.
 
-![acuerdo](../docs/relabel/acuerdo_anotadores.png)
+![acuerdo](../../docs/relabel/acuerdo_anotadores.png)
 
 ### Items más disputados
 
@@ -40,9 +40,9 @@ Interpretación de κ (Landis & Koch): <0.20 pobre · 0.21–0.40 aceptable · 0
 - Desacuerdo por item único: **35.99%**
 - Desacuerdo ponderado por visitas reales: **31.95%** (pondera cada item por cuántas veces apareció; es lo que el usuario percibe)
 
-![distribución](../docs/relabel/distribucion.png)
-![confusión](../docs/relabel/confusion_v1_vs_anotadores.png)
-![recall](../docs/relabel/recall_por_categoria.png)
+![distribución](../../docs/relabel/distribucion.png)
+![confusión](../../docs/relabel/confusion_v1_vs_anotadores.png)
+![recall](../../docs/relabel/recall_por_categoria.png)
 
 ### Errores más costosos (ponderados por visitas reales)
 
@@ -92,7 +92,7 @@ Cada fila es una pestaña que abriste muchas veces y que el modelo coloca mal. L
 
 ### Calibración del umbral
 
-![calibración](../docs/relabel/calibracion_similitud.png)
+![calibración](../../docs/relabel/calibracion_similitud.png)
 
 | Banda de similitud | n | Desacuerdo |
 |---|---|---|
@@ -137,13 +137,13 @@ Se evalúan **dos splits** porque miden cosas distintas:
 | aleatorio | v1 (desplegado) | 69.2% | 80.7% | 49.7% | 399 |
 | aleatorio | **v2 (nuevo)** | 83.5% | 91.4% | 68.4% | 399 |
 
-![modelos porHost](../docs/relabel/modelos_porHost.png)
-![umbral porHost](../docs/relabel/umbral_porHost.png)
-![confusión v2 porHost](../docs/relabel/confusion_v2_porHost.png)
+![modelos porHost](../../docs/relabel/modelos_porHost.png)
+![umbral porHost](../../docs/relabel/umbral_porHost.png)
+![confusión v2 porHost](../../docs/relabel/confusion_v2_porHost.png)
 
-![modelos aleatorio](../docs/relabel/modelos_aleatorio.png)
-![umbral aleatorio](../docs/relabel/umbral_aleatorio.png)
-![confusión v2 aleatorio](../docs/relabel/confusion_v2_aleatorio.png)
+![modelos aleatorio](../../docs/relabel/modelos_aleatorio.png)
+![umbral aleatorio](../../docs/relabel/umbral_aleatorio.png)
+![confusión v2 aleatorio](../../docs/relabel/confusion_v2_aleatorio.png)
 
 ## 4. Recomendaciones
 

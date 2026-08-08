@@ -179,7 +179,7 @@ def main():
       f"| Acuerdo par a par | {agree['acuerdoParPromedio']} |\n")
     A("\nInterpretación de κ (Landis & Koch): <0.20 pobre · 0.21–0.40 aceptable · 0.41–0.60 moderado · "
       "0.61–0.80 sustancial · >0.80 casi perfecto.\n")
-    A("![acuerdo](../docs/relabel/acuerdo_anotadores.png)\n")
+    A("![acuerdo](../../docs/relabel/acuerdo_anotadores.png)\n")
     A("### Items más disputados\n")
     A("| Título | Host | Consenso | Acuerdo |\n|---|---|---|---|")
     for i in agree["itemsMasDisputados"][:10]:
@@ -189,9 +189,9 @@ def main():
     A(f"- Desacuerdo por item único: **{dis['tasaDesacuerdoItems']}%**\n"
       f"- Desacuerdo ponderado por visitas reales: **{dis['tasaDesacuerdoPonderadaPorVisitas']}%** "
       "(pondera cada item por cuántas veces apareció; es lo que el usuario percibe)\n")
-    A("![distribución](../docs/relabel/distribucion.png)")
-    A("![confusión](../docs/relabel/confusion_v1_vs_anotadores.png)")
-    A("![recall](../docs/relabel/recall_por_categoria.png)\n")
+    A("![distribución](../../docs/relabel/distribucion.png)")
+    A("![confusión](../../docs/relabel/confusion_v1_vs_anotadores.png)")
+    A("![recall](../../docs/relabel/recall_por_categoria.png)\n")
     A("### Errores más costosos (ponderados por visitas reales)\n")
     A("Cada fila es una pestaña que abriste muchas veces y que el modelo coloca mal. La similitud "
       "es **alta** en casi todas: el modelo está seguro y equivocado, que es el peor modo de fallo.\n")
@@ -222,7 +222,7 @@ def main():
     for h in dis["peoresHosts"][:12]:
         A(f"| {redacta_host(h['host'])} | {h['n']} | {h['tasa']}% |")
     A("\n### Calibración del umbral\n")
-    A("![calibración](../docs/relabel/calibracion_similitud.png)\n")
+    A("![calibración](../../docs/relabel/calibracion_similitud.png)\n")
     A("| Banda de similitud | n | Desacuerdo |\n|---|---|---|")
     for k, v in dis["porBandaSimilitud"].items():
         A(f"| {k} | {v['n']} | {v['tasa']}% |")
@@ -247,9 +247,9 @@ def main():
                     A(f"| {tag} | {nm} | {r['accuracy']*100:.1f}% | {r['accuracyPonderadaPorVisitas']*100:.1f}% "
                       f"| {r['macroF1']*100:.1f}% | {r['nTest']} |")
         for tag in metrics["splits"]:
-            A(f"\n![modelos {tag}](../docs/relabel/modelos_{tag}.png)")
-            A(f"![umbral {tag}](../docs/relabel/umbral_{tag}.png)")
-            A(f"![confusión v2 {tag}](../docs/relabel/confusion_v2_{tag}.png)")
+            A(f"\n![modelos {tag}](../../docs/relabel/modelos_{tag}.png)")
+            A(f"![umbral {tag}](../../docs/relabel/umbral_{tag}.png)")
+            A(f"![confusión v2 {tag}](../../docs/relabel/confusion_v2_{tag}.png)")
     # ------------------------------------------------ recomendaciones
     if metrics:
         A("\n## 4. Recomendaciones\n")
