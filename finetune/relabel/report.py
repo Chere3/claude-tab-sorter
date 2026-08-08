@@ -234,6 +234,11 @@ def main():
             A(f"| {c} | {k} |")
     if metrics:
         A("\n## 3. Re-entrenamiento\n")
+        dep0 = (metrics.get("despliegue") or {}).get("split", "aleatorio")
+        A(f"Cada split entrena su propio modelo sobre un subconjunto distinto. El artefacto "
+          f"que se despliega es el del split **{dep0}**, y son sus cifras y su barrido de "
+          "umbral los que aparecen abajo como descripción del modelo en producción; el otro "
+          "split sirve para estimar generalización, pero su modelo no se despliega.\n")
         A("Se evalúan **dos splits** porque miden cosas distintas:\n")
         A("- **por host** — ningún dominio aparece en train y test. Mide generalización a sitios nunca "
           "vistos. Es la cota inferior honesta.\n"
@@ -253,7 +258,8 @@ def main():
     # ------------------------------------------------ recomendaciones
     if metrics:
         A("\n## 4. Recomendaciones\n")
-        al = metrics["splits"].get("aleatorio", {}).get("v2")
+        dep = (metrics.get("despliegue") or {}).get("split", "aleatorio")
+        al = metrics["splits"].get(dep, {}).get("v2")
         if al:
             sw = {round(s["threshold"], 2): s for s in al["barridoUmbral"]}
             A("**1. Recalibrar `SIM_THRESHOLD` (`extension/offscreen.js:11`) si se despliega v2.** "

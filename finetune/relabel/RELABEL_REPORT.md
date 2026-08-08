@@ -122,6 +122,8 @@ Los anotadores marcaron estos casos como mal encajados en las 11 categorías act
 
 ## 3. Re-entrenamiento
 
+Cada split entrena su propio modelo sobre un subconjunto distinto. El artefacto que se despliega es el del split **aleatorio**, y son sus cifras y su barrido de umbral los que aparecen abajo como descripción del modelo en producción; el otro split sirve para estimar generalización, pero su modelo no se despliega.
+
 Se evalúan **dos splits** porque miden cosas distintas:
 
 - **por host** — ningún dominio aparece en train y test. Mide generalización a sitios nunca vistos. Es la cota inferior honesta.

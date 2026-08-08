@@ -34,6 +34,14 @@ POS_PER_ITEM = 4
 TEST_FRAC = 0.20
 SEED = 20260808
 
+# Split cuyo modelo se guarda y se despliega. Cada split entrena su propio modelo sobre
+# un subconjunto distinto, así que el artefacto guardado debe ser exactamente aquel del
+# que salen las cifras publicadas y el umbral: si se guarda uno y se reportan las
+# métricas del otro, lo desplegado nunca fue medido.
+# Se elige "aleatorio" porque modela el uso real —revisitar los mismos sitios— y es el
+# barrido de ese split el que fija SIM_THRESHOLD.
+DEPLOY_SPLIT = "aleatorio"
+
 CATEGORIES = [
     "💻 Desarrollo", "🔬 Investigación", "🤖 IA", "💬 Redes Sociales",
     "🎬 Entretenimiento", "⚡ Productividad", "🛒 Compras", "📰 Noticias",
@@ -202,19 +210,28 @@ def main():
         print("   entrenando v2…")
         m2 = train_model(train, SEED)
         r_v2 = evaluate(m2, train, test, tag)
-        if tag == "porHost":
+        if tag == DEPLOY_SPLIT:
             m2.save(OUT_DIR)
-            print(f"   modelo guardado en {OUT_DIR}")
+            print(f"   modelo guardado en {OUT_DIR}  ← este es el que se despliega")
 
-        results["splits"][tag] = {"meta": meta, "base": r_base, "v1": r_v1, "v2": r_v2}
+        results["splits"][tag] = {"meta": meta, "base": r_base, "v1": r_v1, "v2": r_v2,
+                                  "esArtefactoDesplegado": tag == DEPLOY_SPLIT}
         print(f"   {'base':<6} acc={r_base['accuracy']:.4f}  macroF1={r_base['macroF1']:.4f}")
         if r_v1:
             print(f"   {'v1':<6} acc={r_v1['accuracy']:.4f}  macroF1={r_v1['macroF1']:.4f}")
         print(f"   {'v2':<6} acc={r_v2['accuracy']:.4f}  macroF1={r_v2['macroF1']:.4f}  "
               f"(ponderada por visitas {r_v2['accuracyPonderadaPorVisitas']:.4f})")
 
+    results["despliegue"] = {
+        "split": DEPLOY_SPLIT,
+        "artefacto": OUT_DIR,
+        "nota": ("Las métricas y el barrido de umbral de este split describen exactamente "
+                 "el modelo guardado; los del otro split son un modelo distinto, entrenado "
+                 "sobre otro subconjunto, que no se despliega."),
+    }
     json.dump(results, open("output/metrics_v2.json", "w"), ensure_ascii=False, indent=2)
-    print("\nmétricas → output/metrics_v2.json")
+    print(f"\nmétricas → output/metrics_v2.json")
+    print(f"artefacto desplegable: {OUT_DIR} (split {DEPLOY_SPLIT})")
 
 
 if __name__ == "__main__":

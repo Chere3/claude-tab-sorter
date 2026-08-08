@@ -45,10 +45,16 @@ ESTRUCTURAL = re.compile(
 )
 
 # Títulos de marca a secas ("YouTube", "LinkedIn", "YouTube Music"): no revelan nada.
+#
+# El sufijo tras el separador va contra una lista cerrada a propósito. Aceptar texto
+# libre —aunque fuese corto— dejaba pasar títulos de contenido sobre un host permitido
+# ("YouTube - HIV treatment", "Netflix - Political documentary"), que es justo lo que
+# este módulo existe para impedir.
 MARCA = re.compile(
-    r"^(youtube( music)?|linkedin|x|twitter|reddit|github|amazon|ebay|"
+    r"^(youtube(\s+music)?|linkedin|x|twitter|reddit|github|amazon|ebay|"
     r"mercado\s?libre|aliexpress|alibaba|temu|twitch|netflix|claude|chatgpt)"
-    r"(\s*[|\-—/]\s*.{0,24})?$",
+    r"(\s*[|\-—/]\s*(music|shorts|studio|home|inicio|feed|search|buscar|"
+    r"notifications?|notificaciones))?$",
     re.I,
 )
 
