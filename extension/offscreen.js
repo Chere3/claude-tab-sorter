@@ -7,8 +7,10 @@ env.useBrowserCache = false;
 env.localModelPath = chrome.runtime.getURL("models/");
 env.backends.onnx.wasm.wasmPaths = chrome.runtime.getURL("lib/");
 
-const MODEL_NAME = "tab-classifier-v1";
-const SIM_THRESHOLD = 0.65;
+const MODEL_NAME = "tab-classifier-v2";
+const SIM_THRESHOLD = 0.85;   // recalibrado con el corpus real: v2 produce
+                             // similitudes más altas y 0.65 ya no filtraba nada.
+                             // 0.85 → agrupa el 86% acertando el 90%.
 
 let extractor = null;
 let prototypeVectors = null;
@@ -80,9 +82,13 @@ async function loadOrComputePrototypes() {
     prototypeVectors = cached;
     return;
   }
-  log("computing prototypes from scratch");
   prototypeVectors = {};
   for (const [cat, def] of Object.entries(PROTOTYPES)) {
+    if (def.vector) {
+      // centroide precomputado (export_v2.py) — nada que embeber
+      prototypeVectors[cat] = { vector: def.vector, color: def.color };
+      continue;
+    }
     const embs = [];
     for (const ex of def.examples) {
       embs.push(await embed(ex));
